@@ -648,7 +648,7 @@ class SignInManager:
             BrowserHelper.safe_click(self.driver, sign_btn, self.logger)
             TimingManager.smart_wait(3.0, 1.0, self.logger)
 
-            # 检查是否有弹窗 alert（Discuz! 签到成功通常有 alert 提示）
+            # 检查是否有弹窗 alert
             try:
                 from selenium.webdriver.support.ui import WebDriverWait
                 from selenium.webdriver.support import expected_conditions as EC
@@ -656,25 +656,19 @@ class SignInManager:
                 alert_text = alert.text
                 self.logger.info(f"签到弹窗: {alert_text}")
                 alert.accept()
-                TimingManager.smart_wait(2.0, 1.0, self.logger)
-                self.driver.refresh()
-                TimingManager.smart_wait(TimingManager.PAGE_LOAD_DELAY, 1.0, self.logger)
-                status = self._check_signin_status()
-                return status == "already_signed"
             except:
-                self.logger.debug("未检测到 alert 弹窗，检查页面变化")
+                self.logger.debug("未检测到 alert 弹窗")
 
-            # 检查页面是否有成功提示消息
-            page_text = self.driver.page_source
-            if any(kw in page_text for kw in ['签到成功', '已签到', '今日已签到']):
-                self.logger.info("✅ 页面检测到签到成功")
-                return True
-
-            # 刷新页面并检查状态
+            # 刷新页面并检查签到按钮状态
             self.driver.refresh()
             TimingManager.smart_wait(TimingManager.PAGE_LOAD_DELAY, 1.0, self.logger)
             status = self._check_signin_status()
-            return status == "already_signed"
+            if status == "already_signed":
+                self.logger.info("✅ 签到成功")
+                return True
+            else:
+                self.logger.warning(f"签到后状态: {status}")
+                return False
 
         except Exception as e:
             self.logger.error(f"Selenium 签到失败: {e}")
