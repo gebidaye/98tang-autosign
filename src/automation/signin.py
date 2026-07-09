@@ -633,101 +633,63 @@ class SignInManager:
             return "unknown"
 
     def _perform_signin_action(self) -> bool:
-        """
-        执行具体的签到操作
-
-        Returns:
-            是否签到成功
-        """
         try:
-            # 扩展签到按钮选择器，支持button和a标签
+            # 方式1：通过 formhash 直接 POST 签到（绕过 javascript:; 兼容性问题）
+            try:
+                formhash = self.driver.execute_script(
+                    "var el=document.querySelector('input[name=formhash]');return el?el.value:''"
+                )
+                if formhash:
+                    self.logger.info(f"使用 formhash 直接签到")
+                    response = self.driver.execute_async_script(f"""
+                        var cb = arguments[arguments.length - 1];
+                        fetch('{self.base_url}/plugin.php?id=dd_sign:sign', {{
+                            method: 'POST',
+                            headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+                            body: 'formhash={formhash}'
+                        }})
+                        .then(r => r.text())
+                        .then(t => cb(t))
+                        .catch(e => cb('error: ' + e.message));
+                    """)
+                    self.logger.debug(f"签到响应: {response[:100] if response else '空'}")
+                    TimingManager.smart_wait(TimingManager.PAGE_LOAD_DELAY, 1.0, self.logger)
+                    if self._verify_signin_success():
+                        return True
+            except Exception as e:
+                self.logger.warning(f"直接 POST 签到失败: {e}")
+
+            # 方式2：通过 execute_script 点击按钮（备选）
             sign_button_selectors = [
-                # 原有的a标签选择器
                 "div.ddpc_sign_btna a.ddpc_sign_btn_red",
                 "a.ddpc_sign_btn_red",
                 'a[class*="sign_btn"]',
-                'a[href*="sign"]',
-                # 新增button标签选择器
                 'button[name="signsubmit"]',
                 'button[type="submit"][name="signsubmit"]',
                 'button.pn.pnc[name="signsubmit"]',
-                'button[class*="pn"][class*="pnc"]',
                 'button[type="submit"]',
                 'input[type="submit"][name="signsubmit"]',
-                'input[type="button"][name="signsubmit"]',
-                # XPath选择器
                 '//button[@name="signsubmit"]',
-                '//button[@type="submit" and @name="signsubmit"]',
-                '//button[contains(@class, "pn") and contains(@class, "pnc")]',
                 '//button[contains(text(), "签到")]',
                 '//input[@type="submit" and @name="signsubmit"]',
-                '//input[@type="button" and @name="signsubmit"]',
             ]
 
-            sign_button = self.element_finder.find_clickable_by_selectors(
-                sign_button_selectors
-            )
+            sign_button = self.element_finder.find_clickable_by_selectors(sign_button_selectors)
             if not sign_button:
                 self.logger.error("未找到可点击的签到按钮")
                 return False
 
-            # 检查按钮文本和属性
-            button_text = sign_button.text.strip()
-            button_class = sign_button.get_attribute("class") or ""
-            button_href = sign_button.get_attribute("href") or ""
-            button_name = sign_button.get_attribute("name") or ""
-            button_type = sign_button.get_attribute("type") or ""
-            button_tag = sign_button.tag_name.lower()
+            self.logger.info("通过 JavaScript 点击签到按钮")
+            self.driver.execute_script("arguments[0].click();", sign_button)
+            TimingManager.smart_wait(TimingManager.PAGE_LOAD_DELAY, 1.0, self.logger)
 
-            self.logger.debug(
-                f"找到签到按钮 - 标签: '{button_tag}', 文本: '{button_text}', "
-                f"class: '{button_class}', href: '{button_href}', "
-                f"name: '{button_name}', type: '{button_type}'"
-            )
-
-            # 确保这是一个有效的签到按钮
-            is_valid_button = (
-                # 原有的a标签判断
-                "ddpc_sign_btn_red" in button_class
-                or
-                # 新增button标签判断
-                button_name == "signsubmit"
-                or (button_type == "submit" and button_name == "signsubmit")
-                or ("pn" in button_class and "pnc" in button_class)
-                or
-                # 文本内容判断
-                any(keyword in button_text for keyword in ["签到", "点击", "Sign"])
-                or
-                # href判断
-                "sign" in button_href.lower()
-            )
-
-            if is_valid_button:
-                self.logger.info(
-                    f"开始点击签到按钮: '{button_text}' (标签: {button_tag}, name: {button_name})"
-                )
-                BrowserHelper.safe_click(self.driver, sign_button, self.logger)
-                TimingManager.smart_wait(
-                    TimingManager.PAGE_LOAD_DELAY, 1.0, self.logger
-                )
-
-                # 处理签到验证
-                if self.handle_sign_verification():
-                    # 签到完成后，重新验证签到状态
-                    return self._verify_signin_success()
-                else:
-                    self.logger.error("❌ 签到验证失败")
-                    return False
-            else:
-                self.logger.warning(
-                    f"按钮不符合签到条件: '{button_text}' (标签: {button_tag}, name: {button_name})"
-                )
-                return False
+            if self.handle_sign_verification():
+                return self._verify_signin_success()
+            return False
 
         except Exception as e:
             self.logger.error(f"执行签到操作时出错: {e}")
             return False
-
     def _navigate_to_signin_page(self) -> bool:
         """
         导航到签到页面并验证URL
